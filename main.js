@@ -123,6 +123,50 @@ jogador.add(cabeca);
 cena.add(jogador);
 
 // =========================================================
+// 5.5. SISTEMA DE BOLAS E FÍSICA (Semana 3)
+// =========================================================
+
+// Configurações Globais da Física
+const gravidade = 0.012; // Quão rápido a bola cai
+const forcaSalto = 0.35; // A força com que a bola é atirada para cima ao bater no chão
+const bolas = []; // Lista vazia que vai guardar todas as bolas em jogo
+
+// Função mágica para criar uma bola com física e luzes!
+function criarBola(raio, corHex, posX, posY, velX) {
+    // 1. Criar a geometria e material (Requisito 1)
+    const geometriaBola = new THREE.SphereGeometry(raio, 32, 32);
+    
+    // Usamos um material que reage à luz para ficar brilhante
+    const materialBola = new THREE.MeshStandardMaterial({ 
+        color: corHex,
+        roughness: 0.2, // Deixa a bola mais lisa/reflexiva
+        metalness: 0.5
+    });
+    
+    const meshBola = new THREE.Mesh(geometriaBola, materialBola);
+    meshBola.position.set(posX, posY, 0); // Posição inicial
+
+    // 2. Adicionar a luz pontual à própria bola (Requisito 3)
+    // A luz vai ter a mesma cor que a bola e vai andar sempre com ela!
+    const luzBola = new THREE.PointLight(corHex, 1.5, 15);
+    meshBola.add(luzBola); // Anexamos a luz à malha da bola
+
+    cena.add(meshBola);
+
+    // 3. Guardar os dados de física desta bola específica na nossa lista
+    bolas.push({
+        mesh: meshBola,
+        raio: raio,
+        velocidadeX: velX,
+        velocidadeY: 0 // Começa a cair do zero
+    });
+}
+
+// Vamos criar a primeira bola gigante vermelha para testar!
+// Parâmetros: Raio, Cor, Posição X, Posição Y, Velocidade X
+criarBola(1.5, 0xff0000, 0, 10, 0.08);
+
+// =========================================================
 // 6. LÓGICA DE INTERAÇÃO (Teclado)
 // =========================================================
 const estadoTeclas = { esquerda: false, direita: false };
@@ -141,19 +185,56 @@ window.addEventListener('keyup', (evento) => {
 // 7. LOOP DE ANIMAÇÃO PRINCIPAL
 // =========================================================
 const velocidadeJogador = 0.2;
-const limiteArena = 10.5;
+const limiteArenaLateral = 11; // Distância até bater na parede esquerda/direita
+const topoChao = 0.5; // O nosso chão tem altura 1, portanto o topo está em Y=0.5
 
 function animar() {
     requestAnimationFrame(animar);
 
     // Movimento do jogador
-    if (estadoTeclas.esquerda && jogador.position.x > -limiteArena) {
+    if (estadoTeclas.esquerda && jogador.position.x > -limiteArenaLateral + 1) {
         jogador.position.x -= velocidadeJogador;
     }
-    if (estadoTeclas.direita && jogador.position.x < limiteArena) {
+    if (estadoTeclas.direita && jogador.position.x < limiteArenaLateral - 1) {
         jogador.position.x += velocidadeJogador;
     }
 
+    // ==========================================
+    // FÍSICA DAS BOLAS (NOVIDADE)
+    // ==========================================
+    for (let i = 0; i < bolas.length; i++) {
+        let bola = bolas[i];
+
+        // 1. Aplicar gravidade (Puxar a velocidade Y para baixo)
+        bola.velocidadeY -= gravidade;
+
+        // 2. Mover a malha 3D de acordo com as velocidades
+        bola.mesh.position.x += bola.velocidadeX;
+        bola.mesh.position.y += bola.velocidadeY;
+
+        // 3. Colisão com o Chão (Ressalto)
+        // Se a posição Y da bola menos o seu raio tocar no topo do chão...
+        if (bola.mesh.position.y - bola.raio <= topoChao) {
+            // Corrigimos a posição para ela não "afundar" no chão
+            bola.mesh.position.y = topoChao + bola.raio;
+            // E forçamos um salto perfeito!
+            bola.velocidadeY = forcaSalto; 
+        }
+
+        // 4. Colisão com as Paredes (Ressalto Lateral)
+        const limiteBolaX = limiteArenaLateral - bola.raio;
+        
+        if (bola.mesh.position.x >= limiteBolaX) { // Bateu na direita
+            bola.mesh.position.x = limiteBolaX;
+            bola.velocidadeX *= -1; // Inverte a direção horizontal
+        } 
+        else if (bola.mesh.position.x <= -limiteBolaX) { // Bateu na esquerda
+            bola.mesh.position.x = -limiteBolaX;
+            bola.velocidadeX *= -1; // Inverte a direção horizontal
+        }
+    }
+
+    // Desenhar a cena
     renderizador.render(cena, camara);
 }
 
