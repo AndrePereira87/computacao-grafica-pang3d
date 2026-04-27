@@ -11,6 +11,7 @@ camara.position.set(0, 5, 15);
 
 const renderizador = new THREE.WebGLRenderer({ antialias: true });
 renderizador.setSize(window.innerWidth, window.innerHeight);
+renderizador.shadowMap.enabled = true; // LIGA AS SOMBRAS NO MOTOR DO JOGO
 document.body.appendChild(renderizador.domElement);
 
 // =========================================================
@@ -20,7 +21,8 @@ const luzAmbiente = new THREE.AmbientLight(0xffffff, 0.6);
 cena.add(luzAmbiente);
 
 const luzDirecional = new THREE.DirectionalLight(0xffffff, 0.8);
-luzDirecional.position.set(5, 10, 5);
+luzDirecional.position.set(5, 15, 5);
+luzDirecional.castShadow = true; // ESTA LUZ VAI PROJETAR SOMBRAS
 cena.add(luzDirecional);
 
 // =========================================================
@@ -28,7 +30,6 @@ cena.add(luzDirecional);
 // =========================================================
 const carregadorTexturas = new THREE.TextureLoader();
 
-// Atualizado para a tua pasta "background" e as 5 imagens que mostraste na print
 const ficheirosFundos = [
     'background/bg1.jpg', 
     'background/bg2.jpg', 
@@ -39,15 +40,13 @@ const ficheirosFundos = [
 
 const texturasFundos = [];
 
-// Carregar todas as texturas
 ficheirosFundos.forEach(ficheiro => {
     texturasFundos.push(carregadorTexturas.load(ficheiro));
 });
 
-// Criar o ecrã gigante atrás da arena
 const geometriaFundo = new THREE.PlaneGeometry(60, 40);
 const materialFundo = new THREE.MeshBasicMaterial({ 
-    map: texturasFundos[0], // Começa com bg1.jpg
+    map: texturasFundos[0],
     depthWrite: false 
 });
 
@@ -55,52 +54,48 @@ const planoFundo = new THREE.Mesh(geometriaFundo, materialFundo);
 planoFundo.position.set(0, 10, -15);
 cena.add(planoFundo);
 
-// Função para mudar o fundo (podes testar na consola do browser)
 window.mudarFundoAleatorio = function() {
     const indiceAleatorio = Math.floor(Math.random() * texturasFundos.length);
     materialFundo.map = texturasFundos[indiceAleatorio];
     materialFundo.needsUpdate = true;
-    console.log("Fundo alterado para o ficheiro:", ficheirosFundos[indiceAleatorio]);
 };
 
 // =========================================================
 // 4. CONSTRUÇÃO DA ARENA (Chão e Paredes com Texturas)
 // =========================================================
-
-// Carregar as imagens para as paredes e chão
 const texturaParede = carregadorTexturas.load('background/parede.jpg');
 const texturaChao = carregadorTexturas.load('background/chao.jpg');
 
-// TRUQUE: Dizer ao Three.js para repetir as imagens em vez de as esticar!
 texturaParede.wrapS = THREE.RepeatWrapping;
 texturaParede.wrapT = THREE.RepeatWrapping;
-texturaParede.repeat.set(1, 10); // Repete a imagem 10 vezes na vertical
+texturaParede.repeat.set(1, 10); 
 
 texturaChao.wrapS = THREE.RepeatWrapping;
 texturaChao.wrapT = THREE.RepeatWrapping;
-texturaChao.repeat.set(12, 1); // Repete a imagem 12 vezes na horizontal
+texturaChao.repeat.set(12, 1); 
 
-// Criar os materiais usando as texturas carregadas (em vez de cores)
 const materialParede = new THREE.MeshStandardMaterial({ map: texturaParede });
 const materialChao = new THREE.MeshStandardMaterial({ map: texturaChao });
 
-// Geometria igual à de antes
 const geometriaParede = new THREE.BoxGeometry(1, 20, 1);
 
 // Parede Esquerda
 const paredeEsq = new THREE.Mesh(geometriaParede, materialParede);
 paredeEsq.position.set(-12, 10, 0);
+paredeEsq.receiveShadow = true;
 cena.add(paredeEsq);
 
 // Parede Direita
 const paredeDir = new THREE.Mesh(geometriaParede, materialParede);
 paredeDir.position.set(12, 10, 0);
+paredeDir.receiveShadow = true;
 cena.add(paredeDir);
 
 // Chão
 const geometriaChao = new THREE.BoxGeometry(25, 1, 2);
 const chao = new THREE.Mesh(geometriaChao, materialChao);
 chao.position.set(0, 0, 0);
+chao.receiveShadow = true; // O CHÃO RECEBE AS SOMBRAS
 cena.add(chao);
 
 // =========================================================
@@ -108,16 +103,16 @@ cena.add(chao);
 // =========================================================
 const jogador = new THREE.Group();
 
-// Corpo do boneco
 const materialCorpo = new THREE.MeshStandardMaterial({ color: 0x00ff00 });
 const corpo = new THREE.Mesh(new THREE.BoxGeometry(1, 1.5, 1), materialCorpo);
 corpo.position.y = 1.25; 
+corpo.castShadow = true; // BONECO TAMBÉM FAZ SOMBRA
 jogador.add(corpo);
 
-// Cabeça do boneco
 const materialCabeca = new THREE.MeshStandardMaterial({ color: 0xffccaa });
 const cabeca = new THREE.Mesh(new THREE.SphereGeometry(0.4, 16, 16), materialCabeca);
 cabeca.position.y = 2.2; 
+cabeca.castShadow = true;
 jogador.add(cabeca);
 
 cena.add(jogador);
@@ -125,46 +120,39 @@ cena.add(jogador);
 // =========================================================
 // 5.5. SISTEMA DE BOLAS E FÍSICA (Semana 3)
 // =========================================================
+const gravidade = 0.012; 
+const forcaSalto = 0.55; 
+const bolas = []; 
 
-// Configurações Globais da Física
-const gravidade = 0.012; // Quão rápido a bola cai
-const forcaSalto = 0.35; // A força com que a bola é atirada para cima ao bater no chão
-const bolas = []; // Lista vazia que vai guardar todas as bolas em jogo
-
-// Função mágica para criar uma bola com física e luzes!
 function criarBola(raio, corHex, posX, posY, velX) {
-    // 1. Criar a geometria e material (Requisito 1)
     const geometriaBola = new THREE.SphereGeometry(raio, 32, 32);
-    
-    // Usamos um material que reage à luz para ficar brilhante
     const materialBola = new THREE.MeshStandardMaterial({ 
         color: corHex,
-        roughness: 0.2, // Deixa a bola mais lisa/reflexiva
+        roughness: 0.2, 
         metalness: 0.5
     });
     
     const meshBola = new THREE.Mesh(geometriaBola, materialBola);
-    meshBola.position.set(posX, posY, 0); // Posição inicial
+    meshBola.position.set(posX, posY, 0); 
+    meshBola.castShadow = true; // A BOLA FAZ SOMBRA
 
-    // 2. Adicionar a luz pontual à própria bola (Requisito 3)
-    // A luz vai ter a mesma cor que a bola e vai andar sempre com ela!
     const luzBola = new THREE.PointLight(corHex, 1.5, 15);
-    meshBola.add(luzBola); // Anexamos a luz à malha da bola
+    meshBola.add(luzBola); 
 
     cena.add(meshBola);
 
-    // 3. Guardar os dados de física desta bola específica na nossa lista
     bolas.push({
         mesh: meshBola,
         raio: raio,
         velocidadeX: velX,
-        velocidadeY: 0 // Começa a cair do zero
+        velocidadeY: 0 
     });
 }
 
-// Vamos criar a primeira bola gigante vermelha para testar!
-// Parâmetros: Raio, Cor, Posição X, Posição Y, Velocidade X
-criarBola(1.5, 0xff0000, 0, 10, 0.08);
+// Criar as 3 bolas iniciais
+criarBola(1.5, 0xff0000, 0, 10, 0.08);   // Vermelha grande
+criarBola(1.0, 0x0088ff, 5, 8, -0.05);   // Azul média
+criarBola(0.6, 0x00ff00, -6, 12, 0.1);   // Verde pequena
 
 // =========================================================
 // 6. LÓGICA DE INTERAÇÃO (Teclado)
@@ -185,8 +173,8 @@ window.addEventListener('keyup', (evento) => {
 // 7. LOOP DE ANIMAÇÃO PRINCIPAL
 // =========================================================
 const velocidadeJogador = 0.2;
-const limiteArenaLateral = 11; // Distância até bater na parede esquerda/direita
-const topoChao = 0.5; // O nosso chão tem altura 1, portanto o topo está em Y=0.5
+const limiteArenaLateral = 11; 
+const topoChao = 0.5; 
 
 function animar() {
     requestAnimationFrame(animar);
@@ -199,46 +187,37 @@ function animar() {
         jogador.position.x += velocidadeJogador;
     }
 
-    // ==========================================
-    // FÍSICA DAS BOLAS (NOVIDADE)
-    // ==========================================
+    // Física das bolas
     for (let i = 0; i < bolas.length; i++) {
         let bola = bolas[i];
 
-        // 1. Aplicar gravidade (Puxar a velocidade Y para baixo)
         bola.velocidadeY -= gravidade;
 
-        // 2. Mover a malha 3D de acordo com as velocidades
         bola.mesh.position.x += bola.velocidadeX;
         bola.mesh.position.y += bola.velocidadeY;
 
-        // 3. Colisão com o Chão (Ressalto)
-        // Se a posição Y da bola menos o seu raio tocar no topo do chão...
+        // Bater no chão
         if (bola.mesh.position.y - bola.raio <= topoChao) {
-            // Corrigimos a posição para ela não "afundar" no chão
             bola.mesh.position.y = topoChao + bola.raio;
-            // E forçamos um salto perfeito!
             bola.velocidadeY = forcaSalto; 
         }
 
-        // 4. Colisão com as Paredes (Ressalto Lateral)
+        // Bater nas paredes
         const limiteBolaX = limiteArenaLateral - bola.raio;
         
-        if (bola.mesh.position.x >= limiteBolaX) { // Bateu na direita
+        if (bola.mesh.position.x >= limiteBolaX) { 
             bola.mesh.position.x = limiteBolaX;
-            bola.velocidadeX *= -1; // Inverte a direção horizontal
+            bola.velocidadeX *= -1; 
         } 
-        else if (bola.mesh.position.x <= -limiteBolaX) { // Bateu na esquerda
+        else if (bola.mesh.position.x <= -limiteBolaX) { 
             bola.mesh.position.x = -limiteBolaX;
-            bola.velocidadeX *= -1; // Inverte a direção horizontal
+            bola.velocidadeX *= -1; 
         }
     }
 
-    // Desenhar a cena
     renderizador.render(cena, camara);
 }
 
-// Iniciar o jogo
 animar();
 
 // =========================================================
