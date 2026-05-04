@@ -9,9 +9,23 @@ const cena = new THREE.Scene();
 const camara = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 camara.position.set(0, 10, 20);
 
-const renderizador = new THREE.WebGLRenderer({ antialias: true });
+const renderizador = new THREE.WebGLRenderer({ 
+    antialias: true,
+    powerPreference: 'high-performance',
+    precision: 'highp'
+});
+
+// Configurar tamanho com suporte a telas de alta densidade (Retina)
+const dpr = window.devicePixelRatio || 1;
 renderizador.setSize(window.innerWidth, window.innerHeight);
+renderizador.setPixelRatio(dpr);
+
 renderizador.shadowMap.enabled = true; // LIGA AS SOMBRAS NO MOTOR DO JOGO
+renderizador.shadowMap.type = THREE.PCFShadowShadowMap; // Melhor qualidade de sombras
+renderizador.outputColorSpace = THREE.SRGBColorSpace;
+renderizador.toneMapping = THREE.ACESFilmicToneMapping;
+renderizador.toneMappingExposure = 1.0;
+
 document.body.appendChild(renderizador.domElement);
 
 // =========================================================
@@ -419,11 +433,100 @@ gerarCidade();
 cena.add(grupoCidade);
 
 // =========================================================
+// 5.6. SISTEMA DE DISPARO (Semana 4)
+// =========================================================
+const arpoes = []; // Lista para guardar os disparos
+const cordas = []; // Lista para guardar as cordas
+const velocidadeArpao = 0.4;
+let tempoUltimoDisparo = 0;
+const tempoRecuo = 500; // Recoil de 0.5 segundos em milissegundos
+
+// Adicionar a deteção da tecla "Espaço" ao evento de teclado existente
+window.addEventListener('keydown', (evento) => {
+    if (evento.key === 'ArrowLeft') estadoTeclas.esquerda = true;
+    if (evento.key === 'ArrowRight') estadoTeclas.direita = true;
+    
+    // Se carregar no Espaço, dispara!
+    if (evento.code === 'Space') {
+        dispararArpao();
+    }
+});
+
+// Disparo com botão esquerdo do mouse
+window.addEventListener('mousedown', (evento) => {
+    if (evento.button === 0) { // 0 = botão esquerdo
+        dispararArpao();
+    }
+});
+
+function dispararArpao() {
+    // Verificar se ainda está em recoil (cooldown)
+    const tempoAtual = Date.now();
+    if (tempoAtual - tempoUltimoDisparo < tempoRecuo) {
+        return; // Ainda em recoil, não permite disparo
+    }
+    
+    tempoUltimoDisparo = tempoAtual; // Atualizar tempo do último disparo
+    
+    // Criar o arpão (Cilindro muito fino e comprido) - CINZENTO
+    const geometriaArpao = new THREE.CylinderGeometry(0.1, 0.1, 2, 8);
+    const materialArpao = new THREE.MeshStandardMaterial({ color: 0x888888 }); // Cinzento
+    const meshArpao = new THREE.Mesh(geometriaArpao, materialArpao);
+    
+    // O tiro sai da posição atual do jogador, um pouco acima da cabeça
+    meshArpao.position.set(jogador.position.x, jogador.position.y + 1.5, 0);
+    meshArpao.castShadow = true;
+    
+    cena.add(meshArpao);
+    
+    // Criar a corda com padrão em zigzag
+    const geometriaCorda = new THREE.BufferGeometry();
+    const numSegmentos = 40; // Mais segmentos para frequência alta
+    const posicoesCorda = new Float32Array((numSegmentos + 1) * 3);
+    
+    const inicioX = jogador.position.x;
+    const inicioY = jogador.position.y;
+    const finalY = meshArpao.position.y;
+    const alturaSegmento = (finalY - inicioY) / numSegmentos;
+    const amplitudeZigzag = 0.35; // Amplitude reduzida - mais curta que o personagem (largura 1)
+    
+    // Preencher os pontos da corda com zigzag
+    for (let i = 0; i <= numSegmentos; i++) {
+        const y = inicioY + i * alturaSegmento;
+        const zigzag = Math.sin((i / numSegmentos) * Math.PI * 16) * amplitudeZigzag; // 16 oscilações - frequência alta
+        const x = inicioX + zigzag;
+        
+        posicoesCorda[i * 3] = x;
+        posicoesCorda[i * 3 + 1] = y;
+        posicoesCorda[i * 3 + 2] = 0;
+    }
+    
+    geometriaCorda.setAttribute('position', new THREE.BufferAttribute(posicoesCorda, 3));
+    
+    const materialCorda = new THREE.LineBasicMaterial({ color: 0xcccccc, linewidth: 2 }); // Cinzento claro
+    const corda = new THREE.Line(geometriaCorda, materialCorda);
+    cena.add(corda);
+    
+    arpoes.push(meshArpao);
+    cordas.push({
+        mesh: corda,
+        arpao: meshArpao,
+        posicoesCorda: posicoesCorda,
+        numSegmentos: numSegmentos,
+        inicioX: inicioX,
+        inicioY: inicioY,
+        amplitudeZigzag: amplitudeZigzag
+    });
+}
+
+// =========================================================
 // 6. SISTEMA DE BOLAS E FÍSICA (Semana 3)
 // =========================================================
 const gravidade = 0.012; 
 const forcaSalto = 0.55; 
 const bolas = []; 
+let tempoUltimaBolaGerada = 0;
+const intervaloGeracaoBolas = 3; // Gera uma bola a cada 3 segundos
 
 function criarBola(raio, corHex, posX, posY, velX) {
     const geometriaBola = new THREE.SphereGeometry(raio, 32, 32);
@@ -526,6 +629,28 @@ function animar() {
         jogador.position.x += velocidadeJogador;
     }
 
+    // =========================================================
+    // GERAÇÃO PERIÓDICA DE BOLAS
+    // =========================================================
+    tempoUltimaBolaGerada += 0.016; // ~60 FPS = 16ms por frame
+    
+    if (tempoUltimaBolaGerada >= intervaloGeracaoBolas && bolas.length < 7) {
+        tempoUltimaBolaGerada = 0;
+        
+        // Gerar uma bola aleatória
+        const raios = [1.5, 1.0, 0.6];
+        const cores = [0xff0000, 0x0088ff, 0x00ff00];
+        const indiceAleatorio = Math.floor(Math.random() * raios.length);
+        
+        const novoRaio = raios[indiceAleatorio];
+        const novaCor = cores[indiceAleatorio];
+        const novaVelX = (Math.random() - 0.5) * 0.2;
+        const novaX = (Math.random() - 0.5) * limiteArena;
+        const novaY = 15 + Math.random() * 5; // Aparece alto
+        
+        criarBola(novoRaio, novaCor, novaX, novaY, novaVelX);
+    }
+
     // Física das bolas
     for (let i = 0; i < bolas.length; i++) {
         let bola = bolas[i];
@@ -555,6 +680,104 @@ function animar() {
     }
 
     renderizador.render(cena, camara);
+    // ==========================================
+    // ANIMAÇÃO DO ARPÃO E COLISÕES (Semana 4)
+    // ==========================================
+    
+    // Atualizar as cordas para acompanhar os arpões com zigzag
+    cordas.forEach(cordaObj => {
+        const posicoes = cordaObj.posicoesCorda;
+        const finalY = cordaObj.arpao.position.y;
+        const alturaSegmento = (finalY - cordaObj.inicioY) / cordaObj.numSegmentos;
+        
+        // Recalcular os pontos da corda mantendo o zigzag com frequência alta e amplitude curta
+        for (let i = 0; i <= cordaObj.numSegmentos; i++) {
+            const y = cordaObj.inicioY + i * alturaSegmento;
+            const zigzag = Math.sin((i / cordaObj.numSegmentos) * Math.PI * 16) * cordaObj.amplitudeZigzag;
+            const x = cordaObj.inicioX + zigzag;
+            
+            posicoes[i * 3] = x;
+            posicoes[i * 3 + 1] = y;
+            posicoes[i * 3 + 2] = 0;
+        }
+        
+        cordaObj.mesh.geometry.attributes.position.needsUpdate = true;
+    });
+    
+    for (let j = arpoes.length - 1; j >= 0; j--) {
+        let arpao = arpoes[j];
+        
+        // 1. Mover o arpão para cima
+        arpao.position.y += velocidadeArpao;
+
+        for (let i = bolas.length - 1; i >= 0; i--) {
+            let bola = bolas[i];
+
+            // Matemática básica de colisão: 
+            // Distância lateral (X) tem de ser menor que o raio da bola
+            const distanciaX = Math.abs(arpao.position.x - bola.mesh.position.x);
+            const bateuNoX = distanciaX < (bola.raio + 0.1); // 0.1 é a largura do arpão
+            
+            // Altura do arpão (Y) tem de chegar à base da bola
+            const pontaArpaoY = arpao.position.y + 1; // +1 porque a origem do cilindro é no centro
+            const baseBolaY = bola.mesh.position.y - bola.raio;
+            const bateuNoY = pontaArpaoY > baseBolaY;
+
+            // Se cruzou no X e cruzou no Y... TEMOS COLISÃO!
+            if (bateuNoX && bateuNoY) {
+                
+                // A) Guardar os dados da bola destruída antes de a apagar
+                const posX = bola.mesh.position.x;
+                const posY = bola.mesh.position.y;
+                const cor = bola.mesh.material.color.getHex();
+                const raioAntigo = bola.raio;
+
+                // B) Apagar a bola grande, o arpão e a corda do ecrã e das listas
+                cena.remove(bola.mesh);
+                bolas.splice(i, 1);
+                
+                cena.remove(arpao);
+                arpoes.splice(j, 1);
+                
+                // Remover a corda associada
+                const cordaIndex = cordas.findIndex(c => c.arpao === arpao);
+                if (cordaIndex !== -1) {
+                    cena.remove(cordas[cordaIndex].mesh);
+                    cordas.splice(cordaIndex, 1);
+                }
+
+                // C) DIVISÃO DAS BOLAS: Se a bola for grande o suficiente, cria duas novas!
+                if (raioAntigo > 0.6) {
+                    let novoRaio, novaCor;
+                    
+                    // Determinar o próximo tamanho e cor com base na cor atual
+                    if (cor === 0xff0000) { // Vermelha
+                        novoRaio = 1.0; // Próxima é azul média
+                        novaCor = 0x0088ff; // Azul
+                    } else if (cor === 0x0088ff) { // Azul
+                        novoRaio = 0.6; // Próxima é verde pequena
+                        novaCor = 0x00ff00; // Verde
+                    } else { // Verde ou outra
+                        novoRaio = raioAntigo * 0.6;
+                        novaCor = cor;
+                    }
+                    
+                    const novaForcaSaltoY = 0.25; // Um pequeno salto imediato
+                    
+                    // Cria Bola Esquerda (Velocidade X negativa)
+                    criarBola(novoRaio, novaCor, posX, posY, -0.1);
+                    bolas[bolas.length - 1].velocidadeY = novaForcaSaltoY; 
+                    
+                    // Cria Bola Direita (Velocidade X positiva)
+                    criarBola(novoRaio, novaCor, posX, posY, 0.1);
+                    bolas[bolas.length - 1].velocidadeY = novaForcaSaltoY;
+                }
+                
+                // Quebra o ciclo de colisões para este arpão (pois já foi destruído)
+                break; 
+            }
+        }
+    }
 }
 
 animar();
@@ -563,9 +786,11 @@ animar();
 // 10. AJUSTAR O ECRÃ (Responsividade)
 // =========================================================
 window.addEventListener('resize', () => {
+    const dpr = window.devicePixelRatio || 1;
     camara.aspect = window.innerWidth / window.innerHeight;
     camara.updateProjectionMatrix();
     renderizador.setSize(window.innerWidth, window.innerHeight);
+    renderizador.setPixelRatio(dpr);
 
     // Recalcular limites da arena adaptáveis ao novo tamanho do ecrã
     limiteArena = calcularLimitesArena();
